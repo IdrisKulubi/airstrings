@@ -1,5 +1,5 @@
-// Sound engine: Karplus-Strong strings, a subtractive synth pluck and simple drums,
-// selectable as instrument presets. Also exposes a MediaStream for clip recording.
+// Sound engine: Karplus-Strong strings, and a subtractive synth pluck.
+// Every string remembers its own instrument, so different instruments can share the stage. Also exposes a MediaStream for clip recording.
 
 export const SCALES = {
   pentatonic: [0, 2, 4, 7, 9],
@@ -25,10 +25,6 @@ export const PRESETS = {
   synth: {
     label: 'Synth', kind: 'osc', reverb: 0.25,
     palette: ['#ff4fd8', '#8a5cff', '#4fd2ff', '#ff6b9e', '#c86bff'],
-  },
-  drums: {
-    label: 'Drums', kind: 'drum', reverb: 0.1,
-    palette: ['#ff5370', '#ffcb6b', '#f78c6c', '#ff9cac', '#fff0a0'],
   },
 };
 
@@ -56,20 +52,23 @@ export class StringSynth {
 
     this.reverb = ctx.createConvolver();
     this.reverb.buffer = this.makeImpulse(2.2, 2.5);
-    this.wet = ctx.createGain();
-    this.wet.gain.value = this.preset.reverb;
+    // One reverb send per instrument, so each string keeps its own amount of space.
+    this.sends = {};
+    for (const [name, p] of Object.entries(PRESETS)) {
+      const g = ctx.createGain();
+      g.gain.value = p.reverb;
+      g.connect(this.reverb);
+      this.sends[name] = g;
+    }
 
     this.master.connect(comp);
-    this.master.connect(this.reverb);
-    this.reverb.connect(this.wet);
-    this.wet.connect(comp);
+    this.reverb.connect(comp);
     comp.connect(ctx.destination);
 
     // Tap for clip recording.
     this.recDest = ctx.createMediaStreamDestination();
     comp.connect(this.recDest);
 
-    this.noise = this.makeNoise(1);
     await ctx.resume();
   }
 
@@ -84,17 +83,9 @@ export class StringSynth {
     return buf;
   }
 
-  makeNoise(seconds) {
-    const len = Math.floor(this.ctx.sampleRate * seconds);
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    return buf;
-  }
-
+  /** Instrument used for the NEXT string you create. Existing strings keep theirs. */
   setPreset(name) {
     this.presetName = name;
-    if (this.wet) this.wet.gain.setTargetAtTime(this.preset.reverb, this.ctx.currentTime, 0.05);
   }
 
   cycleScale() {
@@ -121,8 +112,8 @@ export class StringSynth {
   }
 
   /** Karplus-Strong buffer. `soft` passes of smoothing on the excitation = mellower attack. */
-  renderKS(freq, p) {
-    const key = `${this.presetName}:${freq.toFixed(2)}`;
+  renderKS(freq, p, name) {
+    const key = `${name}:${freq.toFixed(2)}`;
     if (this.cache.has(key)) return this.cache.get(key);
     const rate = this.ctx.sampleRate;
     const len = Math.floor(rate * 2.5);
@@ -152,23 +143,23 @@ export class StringSynth {
     return buf;
   }
 
-  /** @param midi note  @param velocity 0..1  @param pan -1..1 */
-  pluck(midi, velocity = 0.7, pan = 0) {
+  /** @param midi note  @param velocity 0..1  @param pan -1..1  @param name instrument preset */
+  pluck(midi, velocity = 0.7, pan = 0, name = this.presetName) {
     if (!this.ctx) return;
-    const p = this.preset;
+    const p = PRESETS[name] || this.preset;
     const out = this.ctx.createStereoPanner();
     out.pan.value = Math.max(-1, Math.min(1, pan));
     out.connect(this.master);
+    out.connect(this.sends[name] || this.sends.harp);
     const freq = 440 * Math.pow(2, (midi - 69) / 12);
-    if (p.kind === 'ks') this.playKS(freq, velocity, p, out);
-    else if (p.kind === 'osc') this.playSynth(freq, velocity, out);
-    else this.playDrum(midi, velocity, out);
+    if (p.kind === 'osc') this.playSynth(freq, velocity, out);
+    else this.playKS(freq, velocity, p, name, out);
   }
 
-  playKS(freq, velocity, p, out) {
+  playKS(freq, velocity, p, name, out) {
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
-    src.buffer = this.renderKS(freq, p);
+    src.buffer = this.renderKS(freq, p, name);
     const tone = ctx.createBiquadFilter();
     tone.type = 'lowpass';
     tone.frequency.value = 1200 + velocity * 8000 * p.bright;
@@ -204,44 +195,6 @@ export class StringSynth {
     o1.start(t); o2.start(t); o1.stop(t + 1); o2.stop(t + 1);
   }
 
-  /** Low notes → kick, middle → snare, high → hat. */
-  playDrum(midi, velocity, out) {
-    const ctx = this.ctx, t = ctx.currentTime;
-    const v = 0.3 + velocity * 0.7;
-    if (midi < 56) {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      const start = 110 + (midi - 36) * 4;
-      o.frequency.setValueAtTime(start, t);
-      o.frequency.exponentialRampToValueAtTime(40, t + 0.25);
-      g.gain.setValueAtTime(v, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
-      o.connect(g).connect(out);
-      o.start(t); o.stop(t + 0.5);
-    } else {
-      const isHat = midi >= 72;
-      const n = ctx.createBufferSource();
-      n.buffer = this.noise;
-      const f = ctx.createBiquadFilter();
-      f.type = isHat ? 'highpass' : 'bandpass';
-      f.frequency.value = isHat ? 6000 + (midi - 72) * 150 : 1500 + (midi - 56) * 60;
-      const g = ctx.createGain();
-      const dur = isHat ? 0.07 : 0.2;
-      g.gain.setValueAtTime(v * (isHat ? 0.5 : 0.8), t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      n.connect(f).connect(g).connect(out);
-      n.start(t); n.stop(t + dur + 0.02);
-      if (!isHat) {
-        const o = ctx.createOscillator();
-        const og = ctx.createGain();
-        o.frequency.value = 190;
-        og.gain.setValueAtTime(v * 0.4, t);
-        og.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-        o.connect(og).connect(out);
-        o.start(t); o.stop(t + 0.15);
-      }
-    }
-  }
 }
 
 export function midiName(m) {

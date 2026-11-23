@@ -1,21 +1,18 @@
 // Strings: geometry, pluck detection, damped vibration and rendering.
 
-let palette = ['#ffffff', '#ff8fd8', '#7df9ff', '#f4ff7a', '#b48cff', '#7dffb0', '#ffb36b'];
-let colorIdx = 0;
 let nextId = 1;
 
-export function setPalette(p) { palette = p; }
-export function paletteColor(i) { return palette[i % palette.length]; }
-
 export class AirString {
-  constructor(a, b, midi) {
+  /** @param instrument preset name this string plays with (fixed for its lifetime) */
+  constructor(a, b, midi, instrument, color) {
     this.id = nextId++;
     this.a = a;
     this.b = b;
     this.midi = midi;
-    this.colorIdx = colorIdx++;
-    this.color = paletteColor(this.colorIdx);
+    this.instrument = instrument;
+    this.color = color;
     this.grabbed = false;
+    this.doomed = 0; // 0..1 while a fist is about to delete this string
     this.amp = 0;       // current vibration amplitude (px)
     this.at = 0.5;      // where along the string it was plucked (0..1)
     this.t0 = 0;        // time of last pluck
@@ -78,14 +75,18 @@ export class AirString {
     const py = a.y + (b.y - a.y) * this.at + ny * d * 2;
     const spawn = Math.min((now - this.born) / 250, 1);
 
+    // Turns red and flickers while a fist is about to delete it.
+    const color = this.doomed > 0 ? '#ff3b5c' : this.color;
+    const flicker = this.doomed > 0 ? 0.55 + 0.45 * Math.sin(now / 40) : 1;
+
     ctx.save();
-    ctx.globalAlpha = spawn;
+    ctx.globalAlpha = spawn * flicker;
     ctx.lineCap = 'round';
 
     // glow
-    ctx.shadowColor = this.color;
-    ctx.shadowBlur = 10 + e * 30;
-    ctx.strokeStyle = this.color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10 + e * 30 + this.doomed * 25;
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2 + e * 2.5;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
@@ -99,7 +100,7 @@ export class AirString {
     ctx.stroke();
 
     // tick marks (like frets) along the string
-    ctx.strokeStyle = this.color;
+    ctx.strokeStyle = color;
     ctx.globalAlpha = spawn * 0.55;
     const ticks = Math.max(4, Math.round(L / 45));
     for (let i = 1; i < ticks; i++) {
@@ -119,7 +120,7 @@ export class AirString {
       const held = this.grabbed === key;
       ctx.beginPath();
       ctx.arc(p.x, p.y, held ? 9 : 4.5, 0, Math.PI * 2);
-      if (held) { ctx.fillStyle = this.color; ctx.shadowColor = this.color; ctx.shadowBlur = 18; ctx.fill(); }
+      if (held) { ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 18; ctx.fill(); }
       ctx.stroke();
     }
     ctx.restore();

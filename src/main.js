@@ -1,6 +1,6 @@
 import { createTracker, HandState, CONNECTIONS } from './hands.js';
 import { StringSynth, PRESETS, midiName } from './audio.js';
-import { AirString, Sparks, setPalette, paletteColor } from './strings.js';
+import { AirString, Sparks } from './strings.js';
 
 const video = document.getElementById('cam');
 const canvas = document.getElementById('stage');
@@ -18,6 +18,8 @@ const FINGERTIPS = [8, 12]; // index + middle can pluck
 const MAX_STRINGS = 24;
 const GRAB_RADIUS = 45;     // px: pinch this close to a string end to grab it
 const MIN_LENGTH = 50;      // px: shorter strings are not created / get removed
+const FIST_HOLD_MS = 350;   // how long to hold a fist before the string is deleted
+const FIST_COOLDOWN_MS = 350;
 
 let tracker = null;
 let showHands = true;
@@ -25,6 +27,7 @@ let W = 0, H = 0, DPR = 1;
 let lastVideoTime = -1;
 let toast = { text: '', until: 0 };
 let spawn = null; // two-hand creation in progress: { keys: [k1, k2], a, b }
+const colorCount = {}; // per-instrument colour rotation
 
 // ---------- layout ----------
 function resize() {
@@ -57,12 +60,16 @@ function say(text, ms = 1400) { toast = { text, until: performance.now() + ms };
 // ---------- string actions ----------
 function addString(a, b) {
   if (dist(a, b) < MIN_LENGTH) return;
-  const s = new AirString({ ...a }, { ...b }, synth.noteForLength(dist(a, b), refLen()));
+  const inst = synth.presetName;
+  const pal = PRESETS[inst].palette;
+  colorCount[inst] = (colorCount[inst] || 0) + 1;
+  const s = new AirString({ ...a }, { ...b }, synth.noteForLength(dist(a, b), refLen()),
+    inst, pal[(colorCount[inst] - 1) % pal.length]);
   strings.push(s);
   if (strings.length > MAX_STRINGS) strings.shift();
   s.pluck(0.5, 0.4, performance.now());
-  synth.pluck(s.midi, 0.45, ((a.x + b.x) / 2 / W) * 2 - 1);
-  say(midiName(s.midi));
+  synth.pluck(s.midi, 0.45, ((a.x + b.x) / 2 / W) * 2 - 1, s.instrument);
+  say(`${PRESETS[inst].label} · ${midiName(s.midi)}`);
 }
 
 function removeString(s) {
@@ -75,7 +82,7 @@ function pluckString(s, t, strength, now, fromLoop = false) {
   s.pluck(t, strength, now);
   const x = s.a.x + (s.b.x - s.a.x) * t, y = s.a.y + (s.b.y - s.a.y) * t;
   sparks.burst(x, y, s.color, strength);
-  synth.pluck(s.midi, strength, (x / W) * 2 - 1);
+  synth.pluck(s.midi, strength, (x / W) * 2 - 1, s.instrument);
   if (!fromLoop) looper.record(s, t, strength, now);
 }
 
@@ -95,13 +102,16 @@ function testPluck(id, p0, p1, now) {
   }
 }
 
-function deleteNearest(p) {
-  let best = null, bestD = 90;
+/** String closest to the fist, within a generous radius that scales with hand size. */
+function fistTarget(h) {
+  const palm = h.palm;
+  const radius = Math.max(160, h.size * 3);
+  let best = null, bestD = radius;
   for (const s of strings) {
-    const d = s.distanceTo(p);
+    const d = s.distanceTo(palm);
     if (d < bestD) { bestD = d; best = s; }
   }
-  if (best) { removeString(best); say('deleted'); }
+  return best;
 }
 
 /** Nearest free string end within GRAB_RADIUS of p. */
@@ -129,7 +139,7 @@ function moveGrab(g, p, now) {
   if (midi !== g.s.midi) {
     g.s.midi = midi;
     g.s.pluck(0.5, 0.2, now);
-    synth.pluck(midi, 0.3, (p.x / W) * 2 - 1);
+    synth.pluck(midi, 0.3, (p.x / W) * 2 - 1, g.s.instrument);
   }
 }
 
@@ -223,16 +233,16 @@ function toggleClip() {
 
 // ---------- presets ----------
 const PRESET_KEYS = Object.keys(PRESETS); // 1..5
+/** Pick the instrument for NEW strings; strings already on stage keep their own. */
 function applyPreset(name) {
   synth.setPreset(name);
-  setPalette(PRESETS[name].palette);
-  for (const s of strings) s.color = paletteColor(s.colorIdx);
-  say(PRESETS[name].label);
+  say(`next strings: ${PRESETS[name].label}`);
 }
 
 // ---------- hands ----------
 function processHands(result, now) {
   const r = videoRect();
+  for (const s of strings) s.doomed = 0;
   const seen = new Set();
   (result.landmarks || []).forEach((lms, i) => {
     let key = result.handednesses?.[i]?.[0]?.categoryName || `h${i}`;
@@ -254,7 +264,9 @@ function processHands(result, now) {
     }
     active.push(h);
     const was = h.pinching;
-    const pinching = h.updatePinch();
+    h.fist = h.isFist();
+    // A fist also brings thumb and index together, so it must never count as a pinch.
+    const pinching = h.fist ? (h.pinching = false) : h.updatePinch();
     h.justPinched = pinching && !was;
     h.justReleased = !pinching && was;
   }
@@ -262,7 +274,9 @@ function processHands(result, now) {
   // 2) two-hand string creation in progress
   if (spawn) {
     const [h1, h2] = spawn.keys.map((k) => hands.get(k));
-    if (h1?.pinching && h2?.pinching) {
+    if (h1?.fist || h2?.fist) {
+      spawn = null; // closing into a fist cancels the string being drawn
+    } else if (h1?.pinching && h2?.pinching) {
       spawn.a = h1.pinchPoint;
       spawn.b = h2.pinchPoint;
     } else {
@@ -289,14 +303,18 @@ function processHands(result, now) {
       for (const tip of FINGERTIPS) testPluck(`${h.label}:${tip}`, h.prevPts[tip], h.pts[tip], now);
     }
 
-    if (!h.pinching && h.isFist()) {
-      if (!h.fistSince) h.fistSince = now;
-      else if (now - h.fistSince > 700) {
-        deleteNearest(h.pts[9]);
-        h.fistSince = now + 400;
+    // Fist: the nearest string (within a generous radius) turns red, then is deleted.
+    // Keep holding the fist to delete the next nearest one.
+    const target = h.fist ? fistTarget(h) : null;
+    if (target !== h.fistTarget) { h.fistTarget = target; h.fistSince = Math.max(now, h.fistSince || 0); }
+    if (target && now >= h.fistSince) {
+      target.doomed = Math.min((now - h.fistSince) / FIST_HOLD_MS, 1);
+      if (target.doomed >= 1) {
+        removeString(target);
+        say('deleted');
+        h.fistTarget = null;
+        h.fistSince = now + FIST_COOLDOWN_MS;
       }
-    } else {
-      h.fistSince = 0;
     }
   }
 
@@ -337,25 +355,6 @@ function drawHand(h) {
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(p[tip].x, p[tip].y, 7, 0, Math.PI * 2); ctx.stroke();
   }
-  if (h.fistSince && performance.now() > h.fistSince) {
-    const k = Math.min((performance.now() - h.fistSince) / 700, 1);
-    ctx.strokeStyle = '#ff5370';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(p[9].x, p[9].y, 30, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-/** A lone pinch waiting for the other hand: pulsing ring showing where to meet. */
-function drawPinchHint(p, now) {
-  const pulse = 0.5 + 0.5 * Math.sin(now / 160);
-  ctx.save();
-  ctx.strokeStyle = `rgba(125, 249, 255, ${0.35 + pulse * 0.4})`;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4, 6]);
-  ctx.beginPath(); ctx.arc(p.x, p.y, spawnStartDist() * (0.85 + pulse * 0.15), 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
 }
 
@@ -391,7 +390,7 @@ function drawToast(now) {
   ctx.fillStyle = '#e8ecff';
   ctx.font = '700 22px ui-sans-serif, system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(toast.text, W / 2, H - 40);
+  ctx.fillText(toast.text, W / 2, 80);
   ctx.restore();
 }
 
@@ -448,7 +447,6 @@ function loop() {
   for (const h of hands.values()) {
     if (!h.pts || now - h.seen > 300) continue;
     if (showHands) drawHand(h);
-    if (h.pinching && !h.grab && !h.consumed && !spawn) drawPinchHint(h.pinchPoint, now);
     if (h.grab) noteLabel(h.grab.s.midi, h.pinchPoint.x, h.pinchPoint.y - 22);
   }
   if (spawn) drawPreview(spawn.a, spawn.b);
@@ -460,7 +458,7 @@ function loop() {
   frames++;
   if (now - fpsT > 1000) { fps = frames; frames = 0; fpsT = now; }
   statusEl.textContent =
-    `${fps} fps · ${strings.length} strings · ${PRESETS[synth.presetName].label} · ${synth.scaleName}` +
+    `${fps} fps · ${strings.length} strings · next: ${PRESETS[synth.presetName].label} · ${synth.scaleName}` +
     (tracker ? '' : ' · mouse mode');
   requestAnimationFrame(loop);
 }

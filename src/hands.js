@@ -63,6 +63,8 @@ export class HandState {
     this.fistSince = 0;
     this.grab = null;
     this.consumed = false;
+    this.fist = false;
+    this.fistTarget = null;
   }
 
   update(rawPts, t) {
@@ -84,6 +86,8 @@ export class HandState {
     if (this.grab) this.grab.s.grabbed = false;
     this.grab = null;      // { s: AirString, end: 'a' | 'b' } while dragging a string end
     this.consumed = false; // pinch already used (e.g. finished a two-hand create)
+    this.fist = false;
+    this.fistTarget = null;
   }
 
   get size() {
@@ -105,12 +109,29 @@ export class HandState {
     return this.pinching;
   }
 
-  /** All four fingertips curled close to the palm. */
+  /** Centre of the palm (wrist + the four knuckles). */
+  get palm() {
+    const p = this.pts;
+    const ids = [0, 5, 9, 13, 17];
+    return {
+      x: ids.reduce((s, i) => s + p[i].x, 0) / ids.length,
+      y: ids.reduce((s, i) => s + p[i].y, 0) / ids.length,
+    };
+  }
+
+  /** Forgiving fist test: at least 3 of the 4 fingers are curled.
+   *  A finger counts as curled when its tip is closer to the wrist than its middle
+   *  joint is (works at any hand angle), or the tip is simply tucked near the palm. */
   isFist() {
     const p = this.pts;
-    const palm = { x: (p[0].x + p[9].x) / 2, y: (p[0].y + p[9].y) / 2 };
-    return [8, 12, 16, 20].every(
-      (i) => Math.hypot(p[i].x - palm.x, p[i].y - palm.y) / this.size < 0.75
-    );
+    const d = (i, j) => Math.hypot(p[i].x - p[j].x, p[i].y - p[j].y);
+    const palm = this.palm;
+    const fingers = [[8, 6], [12, 10], [16, 14], [20, 18]]; // [tip, PIP joint]
+    let curled = 0;
+    for (const [tip, pip] of fingers) {
+      const nearPalm = Math.hypot(p[tip].x - palm.x, p[tip].y - palm.y) / this.size < 0.9;
+      if (d(tip, 0) < d(pip, 0) * 1.1 || nearPalm) curled++;
+    }
+    return curled >= 3;
   }
 }

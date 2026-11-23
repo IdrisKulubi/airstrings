@@ -10,7 +10,7 @@ Runs entirely in the browser with webcam hand tracking. No server, no GPU, and n
 | **Pinch with both hands together** in the middle, pull apart, release | Create a string. Where each pinch lets go becomes that end of the string |
 | **Pinch a string's end** and drag in or out | Shorten or stretch it. The pitch changes live as you move |
 | **Swipe** index or middle fingertip across a string | Pluck it (faster swipe = louder, brighter) |
-| **Hold a fist** near a string (~0.7 s) | Delete that string |
+| **Make a fist** near a string | The nearest string turns red and is deleted after ~0.35 s. Keep the fist closed to delete the next one |
 
 Shorter strings play higher notes (pitch ∝ 1/length), snapped to a musical scale so it always sounds good.
 Drag an end until the string is very short and it is removed.
@@ -19,7 +19,7 @@ Drag an end until the string is very short and it is removed.
 
 | Key | Action |
 |---|---|
-| `1`–`5` | Instrument: harp · guitar · kalimba · synth · drums |
+| `1`–`4` | Instrument for **new** strings: harp · guitar · kalimba · synth. Existing strings keep their own instrument, so you can mix them |
 | `R` | Loop: record → play → overdub → play |
 | `L` | Clear the loop |
 | `V` | Start/stop recording a video clip (with audio), saved as `.webm` |
@@ -50,7 +50,7 @@ Open the printed `http://localhost:5173` URL and click **Start camera**. Camera 
 
 - [x] Two-hand pinch-and-pull string creation
 - [x] Grab a string end to resize and retune it live
-- [x] Instrument presets (harp, guitar, kalimba, synth, drums)
+- [x] Per-string instruments (harp, guitar, kalimba, synth) that can be mixed on stage
 - [x] Loop recorder with overdub
 - [x] Record clips with audio (MediaRecorder)
 - [ ] WebGL bloom renderer
