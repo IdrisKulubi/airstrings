@@ -1,14 +1,21 @@
 // Strings: geometry, pluck detection, damped vibration and rendering.
 
-const PALETTE = ['#ffffff', '#ff8fd8', '#7df9ff', '#f4ff7a', '#b48cff', '#7dffb0', '#ffb36b'];
+let palette = ['#ffffff', '#ff8fd8', '#7df9ff', '#f4ff7a', '#b48cff', '#7dffb0', '#ffb36b'];
 let colorIdx = 0;
+let nextId = 1;
+
+export function setPalette(p) { palette = p; }
+export function paletteColor(i) { return palette[i % palette.length]; }
 
 export class AirString {
   constructor(a, b, midi) {
+    this.id = nextId++;
     this.a = a;
     this.b = b;
     this.midi = midi;
-    this.color = PALETTE[colorIdx++ % PALETTE.length];
+    this.colorIdx = colorIdx++;
+    this.color = paletteColor(this.colorIdx);
+    this.grabbed = false;
     this.amp = 0;       // current vibration amplitude (px)
     this.at = 0.5;      // where along the string it was plucked (0..1)
     this.t0 = 0;        // time of last pluck
@@ -105,12 +112,14 @@ export class AirString {
       ctx.stroke();
     }
 
-    // end pegs
+    // end pegs (bigger + filled while an end is being dragged)
     ctx.globalAlpha = spawn;
     ctx.lineWidth = 1.5;
-    for (const p of [a, b]) {
+    for (const [key, p] of [['a', a], ['b', b]]) {
+      const held = this.grabbed === key;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, held ? 9 : 4.5, 0, Math.PI * 2);
+      if (held) { ctx.fillStyle = this.color; ctx.shadowColor = this.color; ctx.shadowBlur = 18; ctx.fill(); }
       ctx.stroke();
     }
     ctx.restore();

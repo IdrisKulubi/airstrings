@@ -61,6 +61,8 @@ export class HandState {
     this.pinching = false;
     this.pinchStart = null;
     this.fistSince = 0;
+    this.grab = null;
+    this.consumed = false;
   }
 
   update(rawPts, t) {
@@ -79,6 +81,9 @@ export class HandState {
     this.pinching = false;
     this.pinchStart = null;
     this.fistSince = 0;
+    if (this.grab) this.grab.s.grabbed = false;
+    this.grab = null;      // { s: AirString, end: 'a' | 'b' } while dragging a string end
+    this.consumed = false; // pinch already used (e.g. finished a two-hand create)
   }
 
   get size() {

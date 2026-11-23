@@ -7,15 +7,27 @@ Runs entirely in the browser with webcam hand tracking. No server, no GPU, and n
 
 | Gesture | Action |
 |---|---|
-| **Pinch** thumb + index, drag, release | Create a string between the two points |
+| **Pinch with both hands together** in the middle, pull apart, release | Create a string. Where each pinch lets go becomes that end of the string |
+| **Pinch a string's end** and drag in or out | Shorten or stretch it. The pitch changes live as you move |
 | **Swipe** index or middle fingertip across a string | Pluck it (faster swipe = louder, brighter) |
 | **Hold a fist** near a string (~0.7 s) | Delete that string |
 
 Shorter strings play higher notes (pitch ∝ 1/length), snapped to a musical scale so it always sounds good.
+Drag an end until the string is very short and it is removed.
 
-Keyboard: `Z` undo · `C` clear all · `S` cycle scale (pentatonic / major / minor / blues / chromatic) · `H` toggle hand skeleton · `?` help
+### Keyboard
 
-No webcam? Open with `?mouse` and use the mouse: drag to draw a string, move across a string to pluck it.
+| Key | Action |
+|---|---|
+| `1`–`5` | Instrument: harp · guitar · kalimba · synth · drums |
+| `R` | Loop: record → play → overdub → play |
+| `L` | Clear the loop |
+| `V` | Start/stop recording a video clip (with audio), saved as `.webm` |
+| `S` | Cycle scale (pentatonic / major / minor / blues / chromatic) |
+| `Z` / `C` | Undo last string / clear all |
+| `H` / `?` | Toggle hand skeleton / help |
+
+No webcam? Open with `?mouse`: drag from empty space to draw a string, drag a string's end to retune it, and move across a string to pluck it.
 
 ## Run it
 
@@ -36,11 +48,14 @@ Open the printed `http://localhost:5173` URL and click **Start camera**. Camera 
 
 ## Roadmap
 
-- [ ] Instrument presets (harp, guitar, kalimba, synth)
-- [ ] Loop recorder
-- [ ] Two-hand stretch to retune a string
-- [ ] Record and share clips (MediaRecorder)
+- [x] Two-hand pinch-and-pull string creation
+- [x] Grab a string end to resize and retune it live
+- [x] Instrument presets (harp, guitar, kalimba, synth, drums)
+- [x] Loop recorder with overdub
+- [x] Record clips with audio (MediaRecorder)
 - [ ] WebGL bloom renderer
+- [ ] String layout templates + save/share via link
+- [ ] Deploy (HTTPS) so it works on phones
 - [ ] Multiplayer jam over WebRTC
 
 ## License
