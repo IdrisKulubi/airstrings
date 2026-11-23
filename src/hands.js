@@ -65,6 +65,10 @@ export class HandState {
     this.consumed = false;
     this.fist = false;
     this.fistTarget = null;
+    this.offFrames = 0;    // consecutive frames that look "not pinched"
+    this.fistFrames = 0;   // consecutive frames that look like a fist
+    this.lastActionAt = 0; // last time a pinch/grab ended (fist delete waits after this)
+    this.fistDone = false; // already deleted with this fist; open the hand to delete again
   }
 
   update(rawPts, t) {
@@ -100,12 +104,20 @@ export class HandState {
     return { x: (p[4].x + p[8].x) / 2, y: (p[4].y + p[8].y) / 2 };
   }
 
-  /** Pinch with hysteresis so it doesn't flicker on/off. */
+  /** Pinch with hysteresis AND a release debounce: fast moves blur the fingers apart
+   *  for a frame or two, which must not count as letting go. */
   updatePinch() {
     const p = this.pts;
     const d = Math.hypot(p[4].x - p[8].x, p[4].y - p[8].y) / this.size;
-    if (!this.pinching && d < 0.32) this.pinching = true;
-    else if (this.pinching && d > 0.5) this.pinching = false;
+    if (!this.pinching) {
+      if (d < 0.32) { this.pinching = true; this.offFrames = 0; }
+    } else if (d > 0.9) {
+      this.pinching = false; // fingers clearly wide open: release immediately
+    } else if (d > 0.5) {
+      if (++this.offFrames >= 4) this.pinching = false; // ~130 ms of "open" to release
+    } else {
+      this.offFrames = 0;
+    }
     return this.pinching;
   }
 

@@ -18,8 +18,11 @@ const FINGERTIPS = [8, 12]; // index + middle can pluck
 const MAX_STRINGS = 24;
 const GRAB_RADIUS = 45;     // px: pinch this close to a string end to grab it
 const MIN_LENGTH = 50;      // px: shorter strings are not created / get removed
-const FIST_HOLD_MS = 350;   // how long to hold a fist before the string is deleted
-const FIST_COOLDOWN_MS = 350;
+const FIST_HOLD_MS = 1000;       // hold a fist this long before the string is deleted
+const FIST_GRACE_MS = 1200;      // no fist-delete right after a pinch/grab ends
+const NEW_STRING_SAFE_MS = 1500; // freshly made strings can't be fist-deleted
+const HAND_LOST_MS = 400;        // forget a hand after it's been missing this long
+let nextHandId = 1;
 
 let tracker = null;
 let showHands = true;
@@ -102,12 +105,13 @@ function testPluck(id, p0, p1, now) {
   }
 }
 
-/** String closest to the fist, within a generous radius that scales with hand size. */
-function fistTarget(h) {
+/** String closest to the fist, within a radius that scales with hand size. */
+function fistTarget(h, now) {
   const palm = h.palm;
-  const radius = Math.max(160, h.size * 3);
+  const radius = Math.max(130, h.size * 2.2);
   let best = null, bestD = radius;
   for (const s of strings) {
+    if (s.grabbed || now - s.born < NEW_STRING_SAFE_MS) continue;
     const d = s.distanceTo(palm);
     if (d < bestD) { bestD = d; best = s; }
   }
@@ -240,46 +244,71 @@ function applyPreset(name) {
 }
 
 // ---------- hands ----------
+/** Match this frame's detections to known hands by wrist position, not by MediaPipe's
+ *  Left/Right label (which can flip or duplicate while hands move fast). */
+function matchHands(dets, now) {
+  const known = [...hands.values()].filter((h) => h.pts && now - h.seen < HAND_LOST_MS);
+  const pairs = [];
+  dets.forEach((d, i) => known.forEach((h) => pairs.push({ i, h, dd: dist(d[0], h.pts[0]) })));
+  pairs.sort((x, y) => x.dd - y.dd);
+  const usedDet = new Set(), usedHand = new Set(), out = [];
+  for (const { i, h, dd } of pairs) {
+    if (usedDet.has(i) || usedHand.has(h) || dd > Math.max(W, H) * 0.35) continue;
+    usedDet.add(i); usedHand.add(h); out.push([h, dets[i]]);
+  }
+  dets.forEach((d, i) => {
+    if (usedDet.has(i)) return;
+    const h = new HandState(`hand${nextHandId++}`);
+    hands.set(h.label, h);
+    out.push([h, d]);
+  });
+  return out;
+}
+
 function processHands(result, now) {
   const r = videoRect();
   for (const s of strings) s.doomed = 0;
+  const dets = (result.landmarks || []).map((lms) => lms.map((lm) => toScreen(lm, r)));
   const seen = new Set();
-  (result.landmarks || []).forEach((lms, i) => {
-    let key = result.handednesses?.[i]?.[0]?.categoryName || `h${i}`;
-    if (seen.has(key)) key += i;
-    seen.add(key);
-    if (!hands.has(key)) hands.set(key, new HandState(key));
-    hands.get(key).update(lms.map((lm) => toScreen(lm, r)), now);
-  });
+  for (const [h, pts] of matchHands(dets, now)) { h.update(pts, now); seen.add(h); }
 
-  // 1) pinch state changes
-  const active = [];
+  // Forget hands that have been gone a while. If one was drawing a string, keep the
+  // string where it was last seen instead of throwing it away.
   for (const [key, h] of hands) {
-    if (!seen.has(key)) {
-      if (now - h.seen > 300) {
-        if (spawn?.keys.includes(key)) spawn = null;
-        h.reset();
-      }
-      continue;
-    }
-    active.push(h);
+    if (seen.has(h) || now - h.seen <= HAND_LOST_MS) continue;
+    if (spawn?.keys.includes(key)) { addString(spawn.a, spawn.b); spawn = null; }
+    h.reset();
+    hands.delete(key);
+  }
+
+  // 1) pinch / fist state
+  const active = [...seen];
+  for (const h of active) {
     const was = h.pinching;
-    h.fist = h.isFist();
-    // A fist also brings thumb and index together, so it must never count as a pinch.
-    const pinching = h.fist ? (h.pinching = false) : h.updatePinch();
+    // A hand that is drawing a string or holding an end is never treated as a fist,
+    // so a sloppy fist-ish shape mid-pull can't cancel anything.
+    const busy = h.grab || spawn?.keys.includes(h.label);
+    // Closing into a fist passes through a pinch-like shape (thumb meets index), so a
+    // folded index finger overrides a pinch — otherwise the fist gets stuck as a pinch.
+    const rawFist = !busy && h.isFist();
+    h.fistFrames = rawFist ? h.fistFrames + 1 : 0;
+    h.fist = h.fistFrames >= 5; // must be held steadily for a few frames
+    if (!h.fist) h.fistDone = false;
+    let pinching;
+    if (rawFist) { pinching = h.pinching = false; h.offFrames = 0; }
+    else pinching = h.updatePinch();
     h.justPinched = pinching && !was;
     h.justReleased = !pinching && was;
+    if (h.justReleased && !rawFist) h.lastActionAt = now;
   }
 
   // 2) two-hand string creation in progress
   if (spawn) {
     const [h1, h2] = spawn.keys.map((k) => hands.get(k));
-    if (h1?.fist || h2?.fist) {
-      spawn = null; // closing into a fist cancels the string being drawn
-    } else if (h1?.pinching && h2?.pinching) {
-      spawn.a = h1.pinchPoint;
-      spawn.b = h2.pinchPoint;
-    } else {
+    if (h1?.pinching && seen.has(h1)) spawn.a = h1.pinchPoint;
+    if (h2?.pinching && seen.has(h2)) spawn.b = h2.pinchPoint;
+    const released = (h) => h && seen.has(h) && !h.pinching;
+    if (released(h1) || released(h2)) {
       addString(spawn.a, spawn.b);
       for (const h of [h1, h2]) if (h?.pinching) h.consumed = true; // other hand still pinched
       spawn = null;
@@ -303,17 +332,18 @@ function processHands(result, now) {
       for (const tip of FINGERTIPS) testPluck(`${h.label}:${tip}`, h.prevPts[tip], h.pts[tip], now);
     }
 
-    // Fist: the nearest string (within a generous radius) turns red, then is deleted.
-    // Keep holding the fist to delete the next nearest one.
-    const target = h.fist ? fistTarget(h) : null;
-    if (target !== h.fistTarget) { h.fistTarget = target; h.fistSince = Math.max(now, h.fistSince || 0); }
-    if (target && now >= h.fistSince) {
+    // Fist delete: hold a steady fist for ~1 s; the target turns red while it counts down.
+    // One string per fist — open the hand and close it again to delete another.
+    const canDelete = h.fist && !h.fistDone && now - h.lastActionAt > FIST_GRACE_MS;
+    const target = canDelete ? fistTarget(h, now) : null;
+    if (target !== h.fistTarget) { h.fistTarget = target; h.fistSince = now; }
+    if (target) {
       target.doomed = Math.min((now - h.fistSince) / FIST_HOLD_MS, 1);
       if (target.doomed >= 1) {
         removeString(target);
         say('deleted');
         h.fistTarget = null;
-        h.fistSince = now + FIST_COOLDOWN_MS;
+        h.fistDone = true;
       }
     }
   }

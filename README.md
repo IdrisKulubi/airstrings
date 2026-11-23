@@ -10,7 +10,7 @@ Runs entirely in the browser with webcam hand tracking. No server, no GPU, and n
 | **Pinch with both hands together** in the middle, pull apart, release | Create a string. Where each pinch lets go becomes that end of the string |
 | **Pinch a string's end** and drag in or out | Shorten or stretch it. The pitch changes live as you move |
 | **Swipe** index or middle fingertip across a string | Pluck it (faster swipe = louder, brighter) |
-| **Make a fist** near a string | The nearest string turns red and is deleted after ~0.35 s. Keep the fist closed to delete the next one |
+| **Hold a fist** near a string | The nearest string turns red and is deleted after ~1 s. One string per fist: open and close again to delete another. Strings younger than 1.5 s are safe |
 
 Shorter strings play higher notes (pitch ∝ 1/length), snapped to a musical scale so it always sounds good.
 Drag an end until the string is very short and it is removed.
