@@ -119,19 +119,21 @@ export class HandState {
     };
   }
 
-  /** Forgiving fist test: at least 3 of the 4 fingers are curled.
-   *  A finger counts as curled when its tip is closer to the wrist than its middle
-   *  joint is (works at any hand angle), or the tip is simply tucked near the palm. */
+  /** Fist test.
+   *  The INDEX finger must be folded into the palm: that is what separates a fist from a
+   *  natural pinch, where the other three fingers often curl too but the index reaches
+   *  out to meet the thumb. On top of that, 2 of the other 3 fingers must be curled
+   *  (tip closer to the wrist than its middle joint, or tucked near the palm). */
   isFist() {
     const p = this.pts;
     const d = (i, j) => Math.hypot(p[i].x - p[j].x, p[i].y - p[j].y);
     const palm = this.palm;
-    const fingers = [[8, 6], [12, 10], [16, 14], [20, 18]]; // [tip, PIP joint]
+    const toPalm = (i) => Math.hypot(p[i].x - palm.x, p[i].y - palm.y) / this.size;
+    if (toPalm(8) > 0.7) return false; // index not folded in → pinch / open hand, not a fist
     let curled = 0;
-    for (const [tip, pip] of fingers) {
-      const nearPalm = Math.hypot(p[tip].x - palm.x, p[tip].y - palm.y) / this.size < 0.9;
-      if (d(tip, 0) < d(pip, 0) * 1.1 || nearPalm) curled++;
+    for (const [tip, pip] of [[12, 10], [16, 14], [20, 18]]) {
+      if (d(tip, 0) < d(pip, 0) * 1.1 || toPalm(tip) < 0.9) curled++;
     }
-    return curled >= 3;
+    return curled >= 2;
   }
 }

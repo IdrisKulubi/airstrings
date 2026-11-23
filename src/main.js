@@ -42,7 +42,7 @@ window.addEventListener('resize', resize);
 resize();
 
 const refLen = () => Math.min(W, H) * 0.9;
-const spawnStartDist = () => Math.min(W, H) * 0.18;
+const spawnStartDist = () => Math.min(W, H) * 0.3; // how close the two pinches must start
 
 /** Video is drawn "cover" + mirrored; this maps normalised landmarks to screen px. */
 function videoRect() {
@@ -354,6 +354,22 @@ function drawHand(h) {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(p[tip].x, p[tip].y, 7, 0, Math.PI * 2); ctx.stroke();
+  }
+  // What the app thinks this hand is doing — makes gestures easy to debug.
+  let label = '', color = '#e8ecff';
+  if (h.fist) { label = 'FIST'; color = '#ff5370'; }
+  else if (h.grab) { label = 'HOLDING END'; color = '#7df9ff'; }
+  else if (spawn?.keys.includes(h.label)) { label = 'PULL APART'; color = '#7df9ff'; }
+  else if (h.pinching && !h.consumed) {
+    const other = [...hands.values()].some((o) => o !== h && o.pinching && performance.now() - o.seen < 300);
+    label = other ? 'BRING PINCHES TOGETHER' : 'PINCH · now pinch the other hand';
+    color = '#f4ff7a';
+  }
+  if (label) {
+    ctx.font = '700 12px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color;
+    ctx.fillText(label, p[0].x, p[0].y + 26);
   }
   ctx.restore();
 }
