@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AirStrings</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <video id="cam" playsinline muted></video>
+    <canvas id="stage"></canvas>
+
+    <div id="hud">
+      <div class="brand">AIR<span>STRINGS</span></div>
+      <div id="status">idle</div>
+    </div>
+
+    <div id="help" class="hidden">
+      <b>Pinch</b> thumb + index and drag → draw a string<br />
+      <b>Swipe a fingertip</b> across a string → pluck it<br />
+      <b>Hold a fist</b> near a string → delete it<br />
+      <kbd>Z</kbd> undo · <kbd>C</kbd> clear · <kbd>H</kbd> hands · <kbd>S</kbd> scale · <kbd>?</kbd> help
+    </div>
+
+    <div id="start">
+      <h1>AIR<span>STRINGS</span></h1>
+      <p>Draw strings in the air. Pluck them with your fingers.</p>
+      <button id="go">Start camera</button>
+      <small>Everything runs locally in your browser. No video leaves your device.</small>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
